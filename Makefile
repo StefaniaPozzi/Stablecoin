@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "init"
+	git commit -m "DEXStablecoin, define functions of DEXSEngine"
 	git push origin master
 
 interaction-sepolia:
