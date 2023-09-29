@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "Minting"
+	git commit -m "deploy scripts, added networkConfig"
 	git push origin master
 
 interaction-sepolia:

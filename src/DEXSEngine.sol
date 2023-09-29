@@ -27,6 +27,7 @@ contract DEXSEngine is ReentrancyGuard {
 
     uint256 private constant PRICE_MISSING_DECIMALS_TO_BE_ROUNDED_IN_WEI = 1e10;
     uint256 private constant ETH_IN_WEI_PRECISION = 1e18;
+    uint256 private constant FEED_PRECISION = 1e8;
     uint256 private constant MIN_HEALTH_FACTOR = 1;
 
     address[] s_collateralTokenSupported;
@@ -93,20 +94,18 @@ contract DEXSEngine is ReentrancyGuard {
 
     function liquidate() external {}
 
-    function healthFactor() external {}
-
     /**
      * @notice If health factor < 1 => the user is liquidated
      * Overcollateralisation of x2
      */
-    function _healthFactor(address user) private view returns (uint256) {
+    function healthFactor(address user) public view returns (uint256) {
         (uint256 dexsMintedInWei, uint256 collateralValue) = _accountInfo(user);
         uint256 reducedCollateralWithLiquidationThreshod = collateralValue / 2;
         return (reducedCollateralWithLiquidationThreshod * ETH_IN_WEI_PRECISION / dexsMintedInWei);
     }
 
     function _checkHealthFactor(address user) internal view {
-        uint256 healthFactor = _healthFactor(user);
+        uint256 healthFactor = healthFactor(user);
         if (healthFactor < MIN_HEALTH_FACTOR) {
             revert DEXSEngine_HealthFactorIsBelowThreshold();
         }
@@ -131,5 +130,9 @@ contract DEXSEngine is ReentrancyGuard {
         (, int256 price,,,) = priceFeed.latestRoundData();
         uint256 priceRoundedInWei = uint256(price) * PRICE_MISSING_DECIMALS_TO_BE_ROUNDED_IN_WEI;
         return ((priceRoundedInWei * usdAmountInWei) / ETH_IN_WEI_PRECISION);
+    }
+
+    function getPriceFeed(address token) public returns (address) {
+        return s_priceFeeds[token];
     }
 }
