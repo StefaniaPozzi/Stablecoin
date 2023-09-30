@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "deploy scripts, added networkConfig"
+	git commit -m "@DEXSEngine: added depositCollateralAndMint, redeemCollateral"
 	git push origin master
 
 interaction-sepolia:
