@@ -40,10 +40,10 @@ contract DEXSTest is Test {
         assertEq(usdExpectedValue, usdActualValue);
     }
 
-    function testRevertWhenCollateralIsZero() public {
+        function testRevertWhenCollateralIsZero() public {
         vm.startPrank(ALICE);
         //first the engine must have some collateral
-        // ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT);
+        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT);
         vm.expectRevert(DEXSEngine.DEXSEngine_NeedsMoreThanZero.selector);
         engine.depositCollateral(weth, 0);
         vm.stopPrank();
