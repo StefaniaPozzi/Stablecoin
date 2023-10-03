@@ -26,7 +26,7 @@ contract DEXStablecoin is ERC20Burnable, Ownable {
         if (_amount <= 0) {
             revert DEXStablecoin_BurningNegativeAmount();
         }
-        if (balanceOf(msg.sender) < _amount) {
+        if (balance < _amount) {
             revert DEXStablecoin_NotEnoughBurnableTokens();
         }
         super.burn(_amount);

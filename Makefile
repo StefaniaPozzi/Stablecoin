@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "@DEXSEngine: burnDEXS"
+	git commit -m "test constructor, depositCollateral"
 	git push origin master
 
 interaction-sepolia:

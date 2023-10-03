@@ -29,11 +29,12 @@ contract DEXSEngine is ReentrancyGuard {
     error DEXSEngine_MintFailed();
     error DEXSEnging_CannotLiquidate();
     error DEXSEngine_HealthFactorNotImproved();
-    error DEXSEngine_LiquidatorHealthFactorNegative(); //?
+    error DEXSEngine_LiquidatorHealthFactorNegative();
+    error DEXSEngine_TokenNotSupportedAsCollateral();
 
-    uint256 private constant PRICE_MISSING_DECIMALS_DOLLAR_TO_WEI = 1e10;
-    uint256 private constant ETH_IN_WEI_PRECISION = 1e18;
-    uint256 private constant FEED_PRECISION = 1e8;
+    uint256 private constant PRECISION10 = 1e10;
+    uint256 private constant PRECISION18 = 1e18;
+    uint256 private constant PRECISION8 = 1e8;
     uint256 private constant MIN_HEALTH_FACTOR = 1e18;
     uint256 private constant LIQUIDATION_PERCENTAGE = 10;
     uint256 private constant LIQUIDATION_BASIS = 100;
@@ -64,21 +65,53 @@ contract DEXSEngine is ReentrancyGuard {
         _;
     }
 
-    constructor(address[] memory tokenAddresses, address[] memory priceFeedAddressess, address _dexsaddress) {
-        if (tokenAddresses.length != priceFeedAddressess.length) {
-            revert DEXSEngine_TokensPriceFeedArrayMismatched();
+    modifier isAllowedToken(address token) {
+        bool isSupported = false;
+        for (uint256 i = 0; i < s_collateralTokenSupported.length; i++) {
+            if (s_collateralTokenSupported[i] == token) {
+                isSupported = true;
+            }
         }
-        i_dexstablecoin = DEXStablecoin(_dexsaddress);
-        for (uint256 i = 0; i < tokenAddresses.length; i++) {
-            s_priceFeeds[tokenAddresses[i]] = priceFeedAddressess[i];
-            s_collateralTokenSupported.push(tokenAddresses[i]);
+        if (!isSupported) {
+            revert DEXSEngine_TokenNotSupportedAsCollateral();
         }
+        _;
     }
 
     /**
+     * It sets the allowed collateral tokens and
+     * deploys the DEXStablecoin contract
+     */
+    constructor(
+        address[] memory collateralTokensAddresses,
+        address[] memory collateralPriceFeedAddressess,
+        address _dexsaddress
+    ) {
+        if (collateralTokensAddresses.length != collateralPriceFeedAddressess.length) {
+            revert DEXSEngine_TokensPriceFeedArrayMismatched();
+        }
+        i_dexstablecoin = DEXStablecoin(_dexsaddress);
+        for (uint256 i = 0; i < collateralTokensAddresses.length; i++) {
+            s_priceFeeds[collateralTokensAddresses[i]] = collateralPriceFeedAddressess[i];
+            s_collateralTokenSupported.push(collateralTokensAddresses[i]);
+        }
+    }
+
+    /*
+    * -------------------------------------------------------- 1. DEPOSIT & MINT COLLATERAL -------------------------------------------------------- *
+    */
+
+    /**
+     * Deposit the collateral on the current engine
+     *
      * @param _token wBTC or wETH
      */
-    function depositCollateral(address _token, uint256 _amount) public needsMoreThanZero(_amount) nonReentrant {
+    function depositCollateral(address _token, uint256 _amount)
+        public
+        needsMoreThanZero(_amount)
+        nonReentrant
+        isAllowedToken(_token)
+    {
         s_collateralDeposited[msg.sender][_token] += _amount;
         emit DEXSEngine_collateralAdded(msg.sender, _token, _amount);
         (bool success) = IERC20(_token).transferFrom(msg.sender, address(this), _amount);
@@ -87,12 +120,34 @@ contract DEXSEngine is ReentrancyGuard {
         }
     }
 
+    /**
+     * Minting is possible only if the caller of this function has collateral
+     * > 200% of the minted DEXS
+     * @param amount amount of DEXS the callers wants to mint (e.g. 7 DEXS)
+     *
+     * @dev we add the amount to s_dexminted anyway because
+     * we use it to calculate the Health Factor in the method _revertIfHealthFactorIsBroken.
+     * If this function reverts, s_dexsminted will go back to its original state.
+     */
+    function mintDEXS(uint256 amount) public needsMoreThanZero(amount) nonReentrant {
+        s_dexsminted[msg.sender] += amount;
+        _revertIfHealthFactorIsBroken(msg.sender);
+        bool minted = i_dexstablecoin.mint(msg.sender, amount);
+        if (!minted) {
+            revert DEXSEngine_MintFailed();
+        }
+    }
+
     function depositCollateralAndMint(address _token, uint256 _tokenAmount, uint256 _dexsAmount) external {
         depositCollateral(_token, _tokenAmount);
         mintDEXS(_dexsAmount);
     }
 
-    function redeemCollateralForDEXS(address token, uint256 amount, uint256 dexsToBurn) external {
+    /*
+    * -------------------------------------------------------- 2. REDEEM & BURN COLLATERAL -------------------------------------------------------- *
+    */
+
+    function redeemCollateralForDEXS(address token, uint256 amount) external {
         burnDEXS(amount);
         redeemCollateral(token, amount);
     }
@@ -145,23 +200,6 @@ contract DEXSEngine is ReentrancyGuard {
         i_dexstablecoin.burn(amount);
     }
 
-    /**
-     * Minting is possible only if the caller of this function has enough collateral
-     * @param amount amount of DEXS the callers wants to mint (e.g. 7 DEXS)
-     *
-     * @dev we add the amount to s_dexminted anyway because
-     * we use it to calculate the Health Factor in the method _revertIfHealthFactorIsBroken.
-     * If this function reverts, s_dexsminted will go back to its original state.
-     */
-    function mintDEXS(uint256 amount) public needsMoreThanZero(amount) nonReentrant {
-        s_dexsminted[msg.sender] += amount;
-        _revertIfHealthFactorIsBroken(msg.sender);
-        bool minted = i_dexstablecoin.mint(msg.sender, amount);
-        if (!minted) {
-            revert DEXSEngine_MintFailed();
-        }
-    }
-
     function burnDEXS(uint256 amount) public needsMoreThanZero(amount) {
         _burnDEXSFrom(amount, msg.sender, msg.sender);
         _revertIfHealthFactorIsBroken(msg.sender);
@@ -193,6 +231,11 @@ contract DEXSEngine is ReentrancyGuard {
      * @param debtUSDWEI the amount of DEXS to burn to cover user's debt
      *
      */
+
+    /*
+    * -------------------------------------------------------- 3. LIQUIDATE -------------------------------------------------------- *
+    */
+
     function liquidate(address token, address user, uint256 debtUSDWEI)
         external
         needsMoreThanZero(debtUSDWEI)
@@ -203,9 +246,9 @@ contract DEXSEngine is ReentrancyGuard {
             revert DEXSEnging_CannotLiquidate();
         }
 
-        uint256 actualDebtWorthToken = getTokenAmountFromUsd(token, debtUSDWEI);
-        uint256 bonus = actualDebtWorthToken * LIQUIDATION_PERCENTAGE / LIQUIDATION_BASIS;
-        uint256 redeemedCollateralWithBonus = actualDebtWorthToken + bonus;
+        uint256 actualDebtToken = usdToToken(debtUSDWEI, token);
+        uint256 bonus = actualDebtToken * LIQUIDATION_PERCENTAGE / LIQUIDATION_BASIS;
+        uint256 redeemedCollateralWithBonus = actualDebtToken + bonus;
 
         _redeemCollateralFrom(token, redeemedCollateralWithBonus, user, msg.sender);
         _burnDEXSFrom(debtUSDWEI, msg.sender, user);
@@ -219,50 +262,56 @@ contract DEXSEngine is ReentrancyGuard {
     /**
      * @notice It calculates the Health Factor for a user starting from his account information.
      * The liquidation threshold is set to double its collateral.
-     * This mean that TODO
-     * @notice Overcollateralisation of x2
+     *
+     * @dev Overcollateralisation has to at least double the DEXS minted for each user
      */
     function healthFactor(address user) public view returns (uint256) {
         (uint256 dexsOwned, uint256 collateralUSDWEI) = _accountInfo(user);
+        if (dexsOwned == 0) return type(uint256).max;
         uint256 reducedCollateralWithLiquidationThreshod = collateralUSDWEI / 2;
-        return (reducedCollateralWithLiquidationThreshod * ETH_IN_WEI_PRECISION / dexsOwned);
-    }
-
-    /**
-     * Gives user basic information:
-     * @return dexsMinted DEXS amount that belongs to the user 
-     * @return collateralUSDWEI USD value in WEI that corresponds to the deposited
-     * collateral (originally in ETH|BTC)
-    */
-    function _accountInfo(address user) private view returns (uint256 dexsMinted, uint256 collateralUSDWEI) {
-        dexsMinted = s_dexsminted[user];
-        collateralUSDWEI = getCollateralUSDWEI(user);
+        return (reducedCollateralWithLiquidationThreshod * PRECISION18 / dexsOwned);
     }
 
     /**
      * Reverts if user's Health Factor goes below the MIN_HEALTH_FACTOR
      * @dev it calls the main healthFactor function
-    */
+     */
     function _revertIfHealthFactorIsBroken(address user) internal view {
-        uint256 healthFactor = healthFactor(user);
-        if (healthFactor < MIN_HEALTH_FACTOR) {
+        uint256 userHealthFactor = healthFactor(user);
+        if (userHealthFactor < MIN_HEALTH_FACTOR) {
             revert DEXSEngine_HealthFactorIsBelowThreshold();
         }
     }
+
+    /*
+    * -------------------------------------------------------- 4. UTILS & STATE -------------------------------------------------------- *
+    */
 
     function getCollateralUSDWEI(address user) public view returns (uint256) {
         uint256 collateralValue;
         for (uint256 i = 0; i < s_collateralTokenSupported.length; i++) {
             address token = s_collateralTokenSupported[i];
             uint256 collateral = s_collateralDeposited[user][token];
-            collateralValue = convertToUsdc(token, collateral);
+            collateralValue = tokenToUsd(token, collateral);
         }
+        return collateralValue;
     }
 
-    function convertToUsdc(address token, uint256 usdAmountInWei) public view returns (uint256) {
+    /**
+     * Gives user basic information:
+     * @return dexsMinted DEXS amount that belongs to the user
+     * @return collateralUSDWEI USD value in WEI that corresponds to the deposited
+     * collateral (originally in ETH|BTC)
+     */
+    function _accountInfo(address user) private view returns (uint256 dexsMinted, uint256 collateralUSDWEI) {
+        dexsMinted = s_dexsminted[user];
+        collateralUSDWEI = getCollateralUSDWEI(user);
+    }
+
+    function tokenToUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
         int256 price = getLatestRoundData(s_priceFeeds[token]);
-        uint256 priceRoundedInWei = uint256(price) * PRICE_MISSING_DECIMALS_DOLLAR_TO_WEI;
-        return ((priceRoundedInWei * usdAmountInWei) / ETH_IN_WEI_PRECISION);
+        uint256 pricePRECISION18 = uint256(price) * PRECISION10;
+        return ((pricePRECISION18 * usdAmountInWei) / PRECISION18);
     }
 
     /**
@@ -271,18 +320,27 @@ contract DEXSEngine is ReentrancyGuard {
      * @dev Procedure:
      * 1. uses the method getLatestRoundData to get the latest price
      * of the collateral (ETH|BTC) -> precision is 8 decimals
-     * 2. it converts it to WEI precision (18 decimals) - misses 1e10
+     * 2. it converts all the information to WEI precision
+     * !! the price feed gives 2e8 for 2$,
+     * meaning that the dollar amount has to be further scaled up 1e8 !!
+     * 3. the token price is calculate DOLLAR_AMOUNTwei/TOKEN_PRICEwei
      * @dev The price feed returns the value of 1ETH = e.g. 2000$
      * -> 2000$ = 1ETH
      * -> 1$ = 1/2000 ETH
      * -> 50$ = 50/2000 ETH
      *
-     * @return amountTokenWEI must have 1e18 precision (WEI)
+     * @return amountTokenWEIWith8decimalsPrecision must have 1e18 precision (WEI)
      */
-    function getTokenAmountFromUsd(address token, uint256 amountUSDWEI) public view returns (uint256 amountTokenWEI) {
-        int256 price = getLatestRoundData(s_priceFeeds[token]);
-        uint256 priceUSDWEI = uint256(price) * PRICE_MISSING_DECIMALS_DOLLAR_TO_WEI;
-        amountTokenWEI = (amountUSDWEI / priceUSDWEI) * 1e18;
+    function usdToToken(uint256 amountUSDWEI, address token)
+        public
+        view
+        returns (uint256 amountTokenWEIWith8decimalsPrecision)
+    {
+        int256 feedPrice_PRECISION8 = getLatestRoundData(s_priceFeeds[token]);
+        uint256 feedPrice_PRECISION18 = uint256(feedPrice_PRECISION8) * PRECISION10;
+        uint256 amountUSD_PRECISIONSCALEDTOFEED = amountUSDWEI;
+
+        amountTokenWEIWith8decimalsPrecision = amountUSD_PRECISIONSCALEDTOFEED / feedPrice_PRECISION18;
     }
 
     /**
@@ -296,7 +354,27 @@ contract DEXSEngine is ReentrancyGuard {
         return price;
     }
 
-    function getPriceFeed(address token) public returns (address) {
+    function getPriceFeed(address token) public view returns (address) {
         return s_priceFeeds[token];
+    }
+
+    function getUsdMinted(address user) public view returns (uint256) {
+        return s_dexsminted[user];
+    }
+
+    function getStablecoinAddress() public view returns (address) {
+        return address(i_dexstablecoin);
+    }
+
+    function getSupportedCollateral() public view returns (address[] memory) {
+        return s_collateralTokenSupported;
+    }
+
+    function getCollateralDeposited(address user, address token) public view returns (uint256) {
+        return s_collateralDeposited[user][token];
+    }
+
+    function getAccountInformation(address user) public view returns (uint256 dexs, uint256 collateral) {
+        (dexs, collateral) = _accountInfo(user);
     }
 }

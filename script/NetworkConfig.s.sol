@@ -61,7 +61,7 @@ contract NetworkConfig is Script {
         });
     }
 
-    function getActiveNetworkProfiler() external returns (NetworkProfiler memory) {
+    function getActiveNetworkProfiler() public view returns (NetworkProfiler memory) {
         return activeNetworkProfiler;
     }
 }
