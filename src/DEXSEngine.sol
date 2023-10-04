@@ -46,7 +46,7 @@ contract DEXSEngine is ReentrancyGuard {
 
     DEXStablecoin private immutable i_dexstablecoin;
 
-    event DEXSEngine_collateralAdded(address indexed user, address indexed token, uint256 indexed amount);
+    event DEXSEngine_CollateralAdded(address indexed user, address indexed token, uint256 indexed amount);
     event DEXSEngine_CollateralRedeemed(
         address indexed from, address indexed to, address indexed token, uint256 amount
     );
@@ -102,9 +102,11 @@ contract DEXSEngine is ReentrancyGuard {
     */
 
     /**
+     *
      * Deposit the collateral on the current engine
      *
      * @param _token wBTC or wETH
+     * @param _amount in ethWEI
      */
     function depositCollateral(address _token, uint256 _amount)
         public
@@ -113,7 +115,7 @@ contract DEXSEngine is ReentrancyGuard {
         isAllowedToken(_token)
     {
         s_collateralDeposited[msg.sender][_token] += _amount;
-        emit DEXSEngine_collateralAdded(msg.sender, _token, _amount);
+        emit DEXSEngine_CollateralAdded(msg.sender, _token, _amount);
         (bool success) = IERC20(_token).transferFrom(msg.sender, address(this), _amount);
         if (!success) {
             revert DEXSEngine_TransferFailed();
@@ -264,12 +266,15 @@ contract DEXSEngine is ReentrancyGuard {
      * The liquidation threshold is set to double its collateral.
      *
      * @dev Overcollateralisation has to at least double the DEXS minted for each user
+     *
+     * @return healthFactorWEI the health factor in wei precision.
+     * It will be 1 if the collateral amount is 2x the minted amount.
      */
-    function healthFactor(address user) public view returns (uint256) {
+    function healthFactor(address user) public view returns (uint256 healthFactorWEI) {
         (uint256 dexsOwned, uint256 collateralUSDWEI) = _accountInfo(user);
         if (dexsOwned == 0) return type(uint256).max;
-        uint256 reducedCollateralWithLiquidationThreshod = collateralUSDWEI / 2;
-        return (reducedCollateralWithLiquidationThreshod * PRECISION18 / dexsOwned);
+        uint256 reducedCollateralWithLiquidationThreshod = collateralUSDWEI / 2; // 500e18
+        healthFactorWEI = (reducedCollateralWithLiquidationThreshod / dexsOwned) * PRECISION18;
     }
 
     /**
@@ -287,14 +292,12 @@ contract DEXSEngine is ReentrancyGuard {
     * -------------------------------------------------------- 4. UTILS & STATE -------------------------------------------------------- *
     */
 
-    function getCollateralUSDWEI(address user) public view returns (uint256) {
-        uint256 collateralValue;
+    function getCollateralUSDWEI(address user) public view returns (uint256 collateralValue) {
         for (uint256 i = 0; i < s_collateralTokenSupported.length; i++) {
             address token = s_collateralTokenSupported[i];
             uint256 collateral = s_collateralDeposited[user][token];
-            collateralValue = tokenToUsd(token, collateral);
+            collateralValue += tokenToUsd(token, collateral);
         }
-        return collateralValue;
     }
 
     /**
@@ -308,10 +311,13 @@ contract DEXSEngine is ReentrancyGuard {
         collateralUSDWEI = getCollateralUSDWEI(user);
     }
 
-    function tokenToUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
+    /**
+     * @return conversion to usdWEI
+     */
+    function tokenToUsd(address token, uint256 ethWEI) public view returns (uint256) {
         int256 price = getLatestRoundData(s_priceFeeds[token]);
         uint256 pricePRECISION18 = uint256(price) * PRECISION10;
-        return ((pricePRECISION18 * usdAmountInWei) / PRECISION18);
+        return ((pricePRECISION18 * ethWEI) / PRECISION18);
     }
 
     /**
@@ -329,18 +335,14 @@ contract DEXSEngine is ReentrancyGuard {
      * -> 1$ = 1/2000 ETH
      * -> 50$ = 50/2000 ETH
      *
-     * @return amountTokenWEIWith8decimalsPrecision must have 1e18 precision (WEI)
+     * @return amountTokenWEI must have 1e18 precision (WEI)
+     * buecause solidity does not handle floating points !
      */
-    function usdToToken(uint256 amountUSDWEI, address token)
-        public
-        view
-        returns (uint256 amountTokenWEIWith8decimalsPrecision)
-    {
+    function usdToToken(uint256 amountUSDWEI, address token) public view returns (uint256 amountTokenWEI) {
         int256 feedPrice_PRECISION8 = getLatestRoundData(s_priceFeeds[token]);
         uint256 feedPrice_PRECISION18 = uint256(feedPrice_PRECISION8) * PRECISION10;
-        uint256 amountUSD_PRECISIONSCALEDTOFEED = amountUSDWEI;
 
-        amountTokenWEIWith8decimalsPrecision = amountUSD_PRECISIONSCALEDTOFEED / feedPrice_PRECISION18;
+        amountTokenWEI = (amountUSDWEI / feedPrice_PRECISION18) * PRECISION18;
     }
 
     /**
