@@ -27,7 +27,7 @@ contract DEXSEngine is ReentrancyGuard {
     error DEXSEngine_TransferFailed();
     error DEXSEngine_HealthFactorIsBelowThreshold();
     error DEXSEngine_MintFailed();
-    error DEXSEnging_CannotLiquidate();
+    error DEXSEngine_CannotLiquidate();
     error DEXSEngine_HealthFactorNotImproved();
     error DEXSEngine_LiquidatorHealthFactorNegative();
     error DEXSEngine_TokenNotSupportedAsCollateral();
@@ -149,35 +149,6 @@ contract DEXSEngine is ReentrancyGuard {
     * -------------------------------------------------------- 2. REDEEM & BURN COLLATERAL -------------------------------------------------------- *
     */
 
-    function redeemCollateralForDEXS(address token, uint256 amount) external {
-        burnDEXS(amount);
-        redeemCollateral(token, amount);
-    }
-
-    /**
-     * Health factor must remain > 1 after the collateral is redeemed
-     * @notice solidity compiler throws an error if the user is trying to redeem more than he has deposited
-     * @notice it's possible to check the health factor before sending the collateral but that's gas inefficient
-     */
-
-    function redeemCollateral(address token, uint256 amount) public needsMoreThanZero(amount) nonReentrant {
-        _redeemCollateralFrom(token, amount, msg.sender, msg.sender);
-        _revertIfHealthFactorIsBroken(msg.sender);
-    }
-
-    function _redeemCollateralFrom(address token, uint256 amount, address from, address to)
-        private
-        needsMoreThanZero(amount)
-        nonReentrant
-    {
-        s_collateralDeposited[from][token] -= amount;
-        emit DEXSEngine_CollateralRedeemed(from, to, token, amount);
-        bool success = IERC20(token).transfer(to, amount);
-        if (!success) {
-            revert DEXSEngine_TransferFailed();
-        }
-    }
-
     /**
      * Burns an amount of DEXS on behalf of an address (target).
      * Performed by a liquidator contract (from).
@@ -194,7 +165,6 @@ contract DEXSEngine is ReentrancyGuard {
         nonReentrant
     {
         s_dexsminted[target] -= amount;
-        //the liquidator must have these tokens -> no checks??
         bool success = i_dexstablecoin.transferFrom(from, address(this), amount);
         if (!success) {
             revert DEXSEngine_TransferFailed();
@@ -205,6 +175,35 @@ contract DEXSEngine is ReentrancyGuard {
     function burnDEXS(uint256 amount) public needsMoreThanZero(amount) {
         _burnDEXSFrom(amount, msg.sender, msg.sender);
         _revertIfHealthFactorIsBroken(msg.sender);
+    }
+
+    /**
+     * Health factor must remain > 1 after the collateral is redeemed
+     * @notice solidity compiler throws an error if the user is trying to redeem more than he has deposited
+     * @notice it's possible to check the health factor before sending the collateral but that's gas inefficient
+     */
+
+    function _redeemCollateralFrom(address token, uint256 amount, address from, address to)
+        private
+        needsMoreThanZero(amount)
+        nonReentrant
+    {
+        s_collateralDeposited[from][token] -= amount;
+        emit DEXSEngine_CollateralRedeemed(from, to, token, amount);
+        bool success = IERC20(token).transfer(to, amount);
+        if (!success) {
+            revert DEXSEngine_TransferFailed();
+        }
+    }
+
+    function redeemCollateral(address token, uint256 amount) public needsMoreThanZero(amount) {
+        _redeemCollateralFrom(token, amount, msg.sender, msg.sender);
+        _revertIfHealthFactorIsBroken(msg.sender);
+    }
+
+    function burnAndRedeemCollateral(address token, uint256 amount) external {
+        burnDEXS(amount);
+        redeemCollateral(token, amount);
     }
 
     /**
@@ -235,7 +234,7 @@ contract DEXSEngine is ReentrancyGuard {
      */
 
     /*
-    * -------------------------------------------------------- 3. LIQUIDATE -------------------------------------------------------- *
+    * -------------------------------------------------------- 3. LIQUIDATION -------------------------------------------------------- *
     */
 
     function liquidate(address token, address user, uint256 debtUSDWEI)
@@ -244,8 +243,9 @@ contract DEXSEngine is ReentrancyGuard {
         nonReentrant
     {
         uint256 userStartingHealthFactor = healthFactor(user);
+
         if (userStartingHealthFactor >= MIN_HEALTH_FACTOR) {
-            revert DEXSEnging_CannotLiquidate();
+            revert DEXSEngine_CannotLiquidate();
         }
 
         uint256 actualDebtToken = usdToToken(debtUSDWEI, token);
@@ -274,7 +274,7 @@ contract DEXSEngine is ReentrancyGuard {
         (uint256 dexsOwned, uint256 collateralUSDWEI) = _accountInfo(user);
         if (dexsOwned == 0) return type(uint256).max;
         uint256 reducedCollateralWithLiquidationThreshod = collateralUSDWEI / 2; // 500e18
-        healthFactorWEI = (reducedCollateralWithLiquidationThreshod / dexsOwned) * PRECISION18;
+        healthFactorWEI = (reducedCollateralWithLiquidationThreshod * PRECISION18 / dexsOwned);
     }
 
     /**
@@ -356,6 +356,13 @@ contract DEXSEngine is ReentrancyGuard {
         return price;
     }
 
+    function getLatestRoundDataFromToken(address token) public view returns (int256) {
+        address priceFeedAddress = s_priceFeeds[token];
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(priceFeedAddress);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        return price;
+    }
+
     function getPriceFeed(address token) public view returns (address) {
         return s_priceFeeds[token];
     }
@@ -378,5 +385,9 @@ contract DEXSEngine is ReentrancyGuard {
 
     function getAccountInformation(address user) public view returns (uint256 dexs, uint256 collateral) {
         (dexs, collateral) = _accountInfo(user);
+    }
+
+    function subtractTest(uint256 amountToSubtract, address user, address token) public view returns (uint256 result) {
+        result = s_collateralDeposited[user][token] - amountToSubtract;
     }
 }

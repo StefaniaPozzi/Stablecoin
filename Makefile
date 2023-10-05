@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "test depositCollateral, minting, utils"
+	git commit -m "test burn"
 	git push origin master
 
 interaction-sepolia:
