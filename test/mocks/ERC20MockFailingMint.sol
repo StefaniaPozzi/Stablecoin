@@ -10,10 +10,11 @@ contract ERC20MockFailingMint is ERC20Burnable, Ownable {
 
     constructor() ERC20("DEXStablecoin", "DEXS") {}
 
-    function mint(address to, uint256 amount) external onlyOwner  {
+    function mint(address to, uint256 amount) external onlyOwner returns (bool) {
         if (to == address(0)) {
             revert DecentralizedStablecoin_AddressNotValid();
         }
         _mint(to, amount);
+        return false;
     }
 }

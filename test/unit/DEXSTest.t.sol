@@ -31,10 +31,12 @@ contract DEXSTest is Test {
     uint256 public constant COLLATERAL_AMOUNT_ETH = 1 ether;
     uint256 public constant SAFE_MINTING_DEXS_AMOUNT = COLLATERAL_AMOUNT_ETH / 2;
     uint256 public constant STARTING_COLLATERAL_ETH_ALICE = 1 ether;
-    uint256 public constant ETHPRICEinUSDWEI = 1000e18;
+
     uint256 public constant PRECISION8 = 1e8;
     uint256 public constant PRECISION10 = 1e10;
     uint256 public constant PRECISION18 = 1e18;
+    uint256 public constant ORIGINAL_ETH_PRICE = 1000e18;
+    int256 public constant PLUMMETED_ETH_PRICE = 18e8;
 
     address[] public tokenAddressesTest;
     address[] public priceFeedAddressesTest;
@@ -74,9 +76,8 @@ contract DEXSTest is Test {
 
     modifier mintHalfCollateral() {
         vm.startPrank(ALICE);
-        uint256 dexToMint = engine.tokenToUsd(weth, COLLATERAL_AMOUNT_ETH) / PRECISION10;
-        // the result was given in WEI: we want to get 8 decimal precision for DEXS and $
-        engine.mintDEXS(dexToMint / 2);
+        uint256 dexToMint = engine.tokenToUsd(weth, SAFE_MINTING_DEXS_AMOUNT);
+        engine.mintDEXS(dexToMint);
         _;
         vm.stopPrank();
     }
@@ -195,7 +196,7 @@ contract DEXSTest is Test {
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engineMock), COLLATERAL_AMOUNT_ETH); // pretending alice is depositing some collateral
         vm.expectRevert(DEXSEngine.DEXSEngine_MintFailed.selector);
-        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, 100e18);
+        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
         vm.stopPrank();
     }
 
@@ -296,19 +297,58 @@ contract DEXSTest is Test {
     }
 
     function testLiquidation_RevertIfHealthFactorIsValid() public depositAndmintHalfCollateralSetLiquidator {
-        //the stablecoin contract allows the engine to use the minted dexs
         vm.expectRevert(DEXSEngine.DEXSEngine_CannotLiquidate.selector);
         engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_AMOUNT);
     }
 
-    
+    modifier liquidation() {
+        //AlICE mints with weth == 1000$ -> COLLATERAL_AMOUNT_ETH = 1000*1e18
+        vm.startPrank(ALICE);
+        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        console.log("1--", engine.healthFactor(ALICE)); //1000e18
+        vm.stopPrank();
+
+        //BOB mints with weth == 18$ -> COLLATERAL_AMOUNT_ETH = 18*1e18
+        //he has good Health Factor, alice does not
+        int256 plummetingEthPrice = 12e8;
+        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(plummetingEthPrice);
+        ERC20MockWETH(weth).mint(LIQUIDATOR, COLLATERAL_AMOUNT_ETH);
+        vm.startPrank(LIQUIDATOR);
+        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH); //the weth contract allows the engine to use the minted weth
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        stablecoin.approve(address(engine), SAFE_MINTING_DEXS_AMOUNT); //the stablecoin contract allows the engine to use the minted dexs
+        engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_AMOUNT);
+        vm.stopPrank();
+        _;
+    }
+
+    function testLiquidation_UserHealthFactorPlummets() public {
+        vm.startPrank(ALICE);
+        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        uint256 originalHealthFactor = engine.healthFactor(ALICE);
+        console.log("1--", originalHealthFactor); //1000e18
+        vm.stopPrank();
+
+        //BOB mints with weth == 18$ -> COLLATERAL_AMOUNT_ETH = 18*1e18
+        //he has good Health Factor, alice does not
+        int256 plummetingEthPrice = 12e8;
+        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(plummetingEthPrice);
+        uint256 plummetedHealthFactor = engine.healthFactor(ALICE);
+        console.log("2--", plummetedHealthFactor);
+
+        assertGt(originalHealthFactor, plummetedHealthFactor);
+    }
+
+    function testLiquidation_modifier() public liquidation {}
     /*
     * -------------------------------------------------------- 4. UTILS & STATE -------------------------------------------------------- *
     */
 
     function testUtils_CollaterlUSD() public depositCollateral {
         uint256 collateralUSD = engine.getCollateralUSDWEI(ALICE);
-        assertEq(ETHPRICEinUSDWEI, collateralUSD);
+        assertEq(ORIGINAL_ETH_PRICE, collateralUSD);
     }
 
     //TODO: make it network agnostic
@@ -319,14 +359,15 @@ contract DEXSTest is Test {
         assertEq(usdExpectedWEI, usdActualValueWEI);
     }
 
-    function testUtils_UsdToToken() public {
+    function testUtils_UsdToTokenT() public {
         uint256 tokenExpectedWEI = 1 * PRECISION18; //mocking eth price 1000$
-        uint256 tokenActualWEI = engine.usdToToken(1 * ETHPRICEinUSDWEI, weth);
+        uint256 tokenActualWEI = engine.usdToToken(1 * ORIGINAL_ETH_PRICE, engine.getWethAddress());
         assertEq(tokenExpectedWEI, tokenActualWEI);
     }
 
     function testUtils_HealthFactorWithoutMinting() public depositCollateral {
         uint256 actualHealthFactor = engine.healthFactor(ALICE);
+        console.log(actualHealthFactor);
         assertEq(actualHealthFactor, type(uint256).max);
     }
 
@@ -342,9 +383,54 @@ contract DEXSTest is Test {
         console.log(collateralUSDWEI);
     }
 
-    function testUtils_HealthFactorCalculatorIs1e18() public depositAndMintHalfCollateral {
-        uint256 healthFactorExpected = 1e18; //1000e18??
+    function testUtils_HealthFactorCalculationIs1e18() public depositAndMintHalfCollateral {
+        uint256 healthFactorExpected = 1e18; //1000e18 (500e18) USD == 1e18 (5e17) ether
         uint256 healthFactorActual = engine.healthFactor(ALICE);
         assertEq(healthFactorActual, healthFactorExpected); //NOT CLEAR
+    }
+
+    function testUtils_TokenToUSDChangesWithPrice() public depositAndMintHalfCollateral {
+        assertEq(engine.tokenToUsd(weth, COLLATERAL_AMOUNT_ETH), ORIGINAL_ETH_PRICE);
+        uint256 expectedPlummetedPrice = 18e18;
+        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(PLUMMETED_ETH_PRICE);
+        assertEq(engine.tokenToUsd(weth, COLLATERAL_AMOUNT_ETH), expectedPlummetedPrice);
+    }
+
+    function testUtils_UsdToTokenChangesWithPrice() public {
+        // uint256 collateralInEth = engine.usdToToken(ORIGINAL_ETH_PRICE, engine.getWethAddress());
+        // console.log(collateralInEth); //expected 1e18
+        // assertEq(collateralInEth, COLLATERAL_AMOUNT_ETH);
+
+        // uint256 expectedPlummetedPrice = 18e16;
+        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(PLUMMETED_ETH_PRICE);
+        int256 latestValuePriceFeed = engine.getLatestRoundData(ethUsdPriceFeed); //8 decimals
+            // uint256 collateraInEthPlummeted = engine.usdToToken(18e18, engine.getWethAddress());
+
+        // console.log(collateraInEthPlummeted); //expected 18e16
+        // assertEq(collateraInEthPlummeted, 18e16);
+    }
+
+    function testUtils_AccountInfoChangesWithPrice() public depositAndMintHalfCollateral {
+        (uint256 dexsOwned, uint256 collateralUSDWEIBefore) = engine.getAccountInformation(ALICE);
+        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(PLUMMETED_ETH_PRICE);
+        uint256 collateralUSDWEIAfterExpected = uint256(PLUMMETED_ETH_PRICE) * PRECISION10;
+
+        console.log(engine.usdToToken(9000000000000000000, engine.getWethAddress()));
+
+        (, uint256 collateralUSDWEIAfter) = engine.getAccountInformation(ALICE);
+        assertEq(collateralUSDWEIBefore, ORIGINAL_ETH_PRICE); //1000e18
+        assertEq(collateralUSDWEIAfter, collateralUSDWEIAfterExpected); //18e18
+        assertEq(dexsOwned, SAFE_MINTING_DEXS_AMOUNT); //5e17
+    }
+
+    function testUtils_getWethAddressEqualsNetworkAddress() public {
+        address wethAddress = engine.getWethAddress();
+        console.log(wethAddress);
+        console.log(weth);
+        assertEq(wethAddress, weth);
+    }
+
+    function testUtils_getUsdToTokenToDelete() public {
+        console.log(engine.usdToToken(10e18, engine.getWethAddress()));
     }
 }

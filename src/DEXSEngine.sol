@@ -273,8 +273,8 @@ contract DEXSEngine is ReentrancyGuard {
     function healthFactor(address user) public view returns (uint256 healthFactorWEI) {
         (uint256 dexsOwned, uint256 collateralUSDWEI) = _accountInfo(user);
         if (dexsOwned == 0) return type(uint256).max;
-        uint256 reducedCollateralWithLiquidationThreshod = collateralUSDWEI / 2; // 500e18
-        healthFactorWEI = (reducedCollateralWithLiquidationThreshod * PRECISION18 / dexsOwned);
+        uint256 reducedCollateralWithLiquidationThresholdUSDWEI = collateralUSDWEI / 2;
+        healthFactorWEI = ((reducedCollateralWithLiquidationThresholdUSDWEI * PRECISION18) / dexsOwned);
     }
 
     /**
@@ -310,7 +310,7 @@ contract DEXSEngine is ReentrancyGuard {
         dexsMinted = s_dexsminted[user];
         collateralUSDWEI = getCollateralUSDWEI(user);
     }
-
+~
     /**
      * @return conversion to usdWEI
      */
@@ -335,6 +335,9 @@ contract DEXSEngine is ReentrancyGuard {
      * -> 1$ = 1/2000 ETH
      * -> 50$ = 50/2000 ETH
      *
+     * @param amountUSDWEI the amount of usd (in wei precision) to be converted into token (wei precision)
+     * @param token the token which latest Price is obtained through priceFeeds
+     *
      * @return amountTokenWEI must have 1e18 precision (WEI)
      * buecause solidity does not handle floating points !
      */
@@ -342,7 +345,15 @@ contract DEXSEngine is ReentrancyGuard {
         int256 feedPrice_PRECISION8 = getLatestRoundData(s_priceFeeds[token]);
         uint256 feedPrice_PRECISION18 = uint256(feedPrice_PRECISION8) * PRECISION10;
 
-        amountTokenWEI = (amountUSDWEI / feedPrice_PRECISION18) * PRECISION18;
+        // fixed-point arithmetic -> x / y:
+        // 1. multiply both members per desired PRECISION18
+        // 2. perform division
+        // 3. divide the result for PRECISION18
+        // 4. after arithmetic semplifications, the result will be equal to (x*PRECISION18)/y
+        // because we need the result in wei
+        // otherwise division between integers will result into 0 (integer rounding)
+
+        amountTokenWEI = ((amountUSDWEI * PRECISION18) / feedPrice_PRECISION18);
     }
 
     /**
@@ -389,5 +400,9 @@ contract DEXSEngine is ReentrancyGuard {
 
     function subtractTest(uint256 amountToSubtract, address user, address token) public view returns (uint256 result) {
         result = s_collateralDeposited[user][token] - amountToSubtract;
+    }
+
+    function getWethAddress() public view returns (address) {
+        return s_collateralTokenSupported[0];
     }
 }
