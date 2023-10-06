@@ -310,7 +310,7 @@ contract DEXSEngine is ReentrancyGuard {
         dexsMinted = s_dexsminted[user];
         collateralUSDWEI = getCollateralUSDWEI(user);
     }
-~
+
     /**
      * @return conversion to usdWEI
      */
