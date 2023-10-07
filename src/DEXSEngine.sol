@@ -125,7 +125,7 @@ contract DEXSEngine is ReentrancyGuard {
     /**
      * Minting is possible only if the caller of this function has collateral
      * > 200% of the minted DEXS
-     * @param amount amount of DEXS the callers wants to mint (e.g. 7 DEXS)
+     * @param amount amount of DEXS the callers wants to mint in WEI
      *
      * @dev we add the amount to s_dexminted anyway because
      * we use it to calculate the Health Factor in the method _revertIfHealthFactorIsBroken.
@@ -184,7 +184,7 @@ contract DEXSEngine is ReentrancyGuard {
      */
 
     function _redeemCollateralFrom(address token, uint256 amount, address from, address to)
-        private
+        public
         needsMoreThanZero(amount)
         nonReentrant
     {
@@ -237,11 +237,7 @@ contract DEXSEngine is ReentrancyGuard {
     * -------------------------------------------------------- 3. LIQUIDATION -------------------------------------------------------- *
     */
 
-    function liquidate(address token, address user, uint256 debtUSDWEI)
-        external
-        needsMoreThanZero(debtUSDWEI)
-        nonReentrant
-    {
+    function liquidate(address token, address user, uint256 debtUSDWEI) external needsMoreThanZero(debtUSDWEI) {
         uint256 userStartingHealthFactor = healthFactor(user);
 
         if (userStartingHealthFactor >= MIN_HEALTH_FACTOR) {
@@ -249,7 +245,7 @@ contract DEXSEngine is ReentrancyGuard {
         }
 
         uint256 actualDebtToken = usdToToken(debtUSDWEI, token);
-        uint256 bonus = actualDebtToken * LIQUIDATION_PERCENTAGE / LIQUIDATION_BASIS;
+        uint256 bonus = ((actualDebtToken * LIQUIDATION_PERCENTAGE) / LIQUIDATION_BASIS);
         uint256 redeemedCollateralWithBonus = actualDebtToken + bonus;
 
         _redeemCollateralFrom(token, redeemedCollateralWithBonus, user, msg.sender);
@@ -273,8 +269,16 @@ contract DEXSEngine is ReentrancyGuard {
     function healthFactor(address user) public view returns (uint256 healthFactorWEI) {
         (uint256 dexsOwned, uint256 collateralUSDWEI) = _accountInfo(user);
         if (dexsOwned == 0) return type(uint256).max;
-        uint256 reducedCollateralWithLiquidationThresholdUSDWEI = collateralUSDWEI / 2;
-        healthFactorWEI = ((reducedCollateralWithLiquidationThresholdUSDWEI * PRECISION18) / dexsOwned);
+        return _healthFactorCalculation(dexsOwned, collateralUSDWEI);
+    }
+
+    function _healthFactorCalculation(uint256 dexs, uint256 collateralUSDWEI)
+        public
+        pure
+        returns (uint256 healthFactorWEI)
+    {
+        uint256 reducedCollateralWithLiquidationThresholdUSDWEI = ((collateralUSDWEI * 50) / 100);
+        healthFactorWEI = ((reducedCollateralWithLiquidationThresholdUSDWEI * PRECISION18) / dexs);
     }
 
     /**

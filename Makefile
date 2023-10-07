@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "test liquidation, health factor"
+	git commit -m "test liquidation modifier"
 	git push origin master
 
 interaction-sepolia:

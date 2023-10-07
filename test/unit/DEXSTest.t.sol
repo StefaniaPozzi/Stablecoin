@@ -29,8 +29,7 @@ contract DEXSTest is Test {
     address public LIQUIDATOR = makeAddr("bob");
 
     uint256 public constant COLLATERAL_AMOUNT_ETH = 1 ether;
-    uint256 public constant SAFE_MINTING_DEXS_AMOUNT = COLLATERAL_AMOUNT_ETH / 2;
-    uint256 public constant STARTING_COLLATERAL_ETH_ALICE = 1 ether;
+    uint256 public constant SAFE_MINTING_DEXS_USDWEI = 500e18; //USD WEI
 
     uint256 public constant PRECISION8 = 1e8;
     uint256 public constant PRECISION10 = 1e10;
@@ -51,9 +50,9 @@ contract DEXSTest is Test {
         (stablecoin, engine, networkConfig) = deployer.run();
         (ethUsdPriceFeed, btcUsdPriceFeed, weth, wbtc, deployerKey) = networkConfig.activeNetworkProfiler();
         if (block.chainid == 31337) {
-            vm.deal(ALICE, STARTING_COLLATERAL_ETH_ALICE);
+            vm.deal(ALICE, COLLATERAL_AMOUNT_ETH);
         }
-        ERC20MockWETH(weth).mint(ALICE, STARTING_COLLATERAL_ETH_ALICE);
+        ERC20MockWETH(weth).mint(ALICE, COLLATERAL_AMOUNT_ETH);
     }
 
     function setUp_Constructor(bool isSync) public returns (DEXSEngine) {
@@ -76,7 +75,7 @@ contract DEXSTest is Test {
 
     modifier mintHalfCollateral() {
         vm.startPrank(ALICE);
-        uint256 dexToMint = engine.tokenToUsd(weth, SAFE_MINTING_DEXS_AMOUNT);
+        uint256 dexToMint = engine.tokenToUsd(weth, SAFE_MINTING_DEXS_USDWEI);
         engine.mintDEXS(dexToMint);
         _;
         vm.stopPrank();
@@ -85,7 +84,7 @@ contract DEXSTest is Test {
     modifier depositAndMintHalfCollateral() {
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
         _;
         vm.stopPrank();
     }
@@ -93,13 +92,13 @@ contract DEXSTest is Test {
     modifier depositAndmintHalfCollateralSetLiquidator() {
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
         vm.stopPrank();
         ERC20MockWETH(weth).mint(LIQUIDATOR, COLLATERAL_AMOUNT_ETH);
         vm.startPrank(LIQUIDATOR);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH); //the collateral contract allows the engine to use the collateral
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
-        stablecoin.approve(address(engine), SAFE_MINTING_DEXS_AMOUNT);
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
+        stablecoin.approve(address(engine), SAFE_MINTING_DEXS_USDWEI);
         _;
     }
 
@@ -156,7 +155,7 @@ contract DEXSTest is Test {
         (uint256 dexs, uint256 collateralUSD) = engine.getAccountInformation(ALICE);
         uint256 usdToToken = engine.usdToToken(collateralUSD, weth);
         assertEq(dexs, 0);
-        assertEq(STARTING_COLLATERAL_ETH_ALICE, usdToToken);
+        assertEq(COLLATERAL_AMOUNT_ETH, usdToToken);
     }
 
     function testDepositCollateral_emitsEventWhenDeposit() public {
@@ -172,7 +171,7 @@ contract DEXSTest is Test {
     function testDepositCollateral_TransferFailed() public {}
 
     function testMintDEXS_MintsCorrectly() public depositAndMintHalfCollateral {
-        uint256 expectedUsdOrDscMinted = 5e17; // to be inside the safe threshold (1/2 of 1e18)
+        uint256 expectedUsdOrDscMinted = 500e18;
         uint256 actualUsdOrDscMinted = engine.getUsdMinted(ALICE);
         assertEq(expectedUsdOrDscMinted, actualUsdOrDscMinted);
     }
@@ -196,7 +195,7 @@ contract DEXSTest is Test {
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engineMock), COLLATERAL_AMOUNT_ETH); // pretending alice is depositing some collateral
         vm.expectRevert(DEXSEngine.DEXSEngine_MintFailed.selector);
-        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
         vm.stopPrank();
     }
 
@@ -292,46 +291,55 @@ contract DEXSTest is Test {
         AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(18e8); //this will trigger the revert
 
         vm.expectRevert(DEXSEngine.DEXSEngine_HealthFactorNotImproved.selector);
-        engineMock.liquidate(weth, ALICE, SAFE_MINTING_DEXS_AMOUNT); //adjust
+        engineMock.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI); //adjust
         vm.stopPrank();
     }
 
     function testLiquidation_RevertIfHealthFactorIsValid() public depositAndmintHalfCollateralSetLiquidator {
         vm.expectRevert(DEXSEngine.DEXSEngine_CannotLiquidate.selector);
-        engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_AMOUNT);
+        engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI);
     }
 
     modifier liquidation() {
-        //AlICE mints with weth == 1000$ -> COLLATERAL_AMOUNT_ETH = 1000*1e18
+        //AlICE mints when weth == 1000$ 
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
-        console.log("1--", engine.healthFactor(ALICE)); //1000e18
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
         vm.stopPrank();
 
-        //BOB mints with weth == 18$ -> COLLATERAL_AMOUNT_ETH = 18*1e18
-        //he has good Health Factor, alice does not
-        int256 plummetingEthPrice = 12e8;
+        //BOB mints when weth == 500$
+        int256 plummetingEthPrice = 500e8;
         AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(plummetingEthPrice);
-        ERC20MockWETH(weth).mint(LIQUIDATOR, COLLATERAL_AMOUNT_ETH);
+        ERC20MockWETH(weth).mint(LIQUIDATOR, COLLATERAL_AMOUNT_ETH * 2);
+
         vm.startPrank(LIQUIDATOR);
-        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH); //the weth contract allows the engine to use the minted weth
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
-        stablecoin.approve(address(engine), SAFE_MINTING_DEXS_AMOUNT); //the stablecoin contract allows the engine to use the minted dexs
-        engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_AMOUNT);
+        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH * 2); //the weth contract allows the engine to use the minted weth
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH * 2, SAFE_MINTING_DEXS_USDWEI);
+        stablecoin.approve(address(engine), COLLATERAL_AMOUNT_ETH * 2); //the stablecoin contract allows the engine to use the minted dexs
+
+        uint256 actualDebt = 1e18; //ethereum == 500$ gets doubled to 1000$because the pice halved
+        uint256 bonus = ((actualDebt * 10) / 100);
+        uint256 redeemedCollateralWithBonus = actualDebt + bonus;
+        console.log(redeemedCollateralWithBonus);
+        engine._redeemCollateralFrom(weth, actualDebt, ALICE, msg.sender);
+        // // console.log(engine.getCollateralDeposited(ALICE, weth)); 1e18 eth
+        console.log(engine.usdToToken(SAFE_MINTING_DEXS_USDWEI, weth));
+        // engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI);
         vm.stopPrank();
         _;
     }
 
+    function testLiquidation_modifier() public liquidation {}
+
     function testLiquidation_UserHealthFactorPlummets() public {
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_AMOUNT);
+        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
         uint256 originalHealthFactor = engine.healthFactor(ALICE);
         console.log("1--", originalHealthFactor); //1000e18
         vm.stopPrank();
 
-        //BOB mints with weth == 18$ -> COLLATERAL_AMOUNT_ETH = 18*1e18
+        //BOB mints with weth == 12$ -> COLLATERAL_AMOUNT_ETH = 12*1e18
         //he has good Health Factor, alice does not
         int256 plummetingEthPrice = 12e8;
         AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(plummetingEthPrice);
@@ -340,8 +348,6 @@ contract DEXSTest is Test {
 
         assertGt(originalHealthFactor, plummetedHealthFactor);
     }
-
-    function testLiquidation_modifier() public liquidation {}
 
     /*
     * -------------------------------------------------------- 4. UTILS & STATE -------------------------------------------------------- *
@@ -384,6 +390,7 @@ contract DEXSTest is Test {
         console.log(collateralUSDWEI);
     }
 
+    //this is not ok
     function testUtils_HealthFactorCalculationIs1e18() public depositAndMintHalfCollateral {
         uint256 healthFactorExpected = 1e18; //1000e18 (500e18) USD == 1e18 (5e17) ether
         uint256 healthFactorActual = engine.healthFactor(ALICE);
@@ -398,30 +405,17 @@ contract DEXSTest is Test {
     }
 
     function testUtils_UsdToTokenChangesWithPrice() public {
-        // uint256 collateralInEth = engine.usdToToken(ORIGINAL_ETH_PRICE, engine.getWethAddress());
-        // console.log(collateralInEth); //expected 1e18
-        // assertEq(collateralInEth, COLLATERAL_AMOUNT_ETH);
-
-        // uint256 expectedPlummetedPrice = 18e16;
-        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(PLUMMETED_ETH_PRICE);
-        int256 latestValuePriceFeed = engine.getLatestRoundData(ethUsdPriceFeed); //8 decimals
-            // uint256 collateraInEthPlummeted = engine.usdToToken(18e18, engine.getWethAddress());
-
-        // console.log(collateraInEthPlummeted); //expected 18e16
-        // assertEq(collateraInEthPlummeted, 18e16);
+        //todo
     }
 
     function testUtils_AccountInfoChangesWithPrice() public depositAndMintHalfCollateral {
         (uint256 dexsOwned, uint256 collateralUSDWEIBefore) = engine.getAccountInformation(ALICE);
         AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(PLUMMETED_ETH_PRICE);
         uint256 collateralUSDWEIAfterExpected = uint256(PLUMMETED_ETH_PRICE) * PRECISION10;
-
-        console.log(engine.usdToToken(9000000000000000000, engine.getWethAddress()));
-
         (, uint256 collateralUSDWEIAfter) = engine.getAccountInformation(ALICE);
         assertEq(collateralUSDWEIBefore, ORIGINAL_ETH_PRICE); //1000e18
         assertEq(collateralUSDWEIAfter, collateralUSDWEIAfterExpected); //18e18
-        assertEq(dexsOwned, SAFE_MINTING_DEXS_AMOUNT); //5e17
+        assertEq(dexsOwned, SAFE_MINTING_DEXS_USDWEI); //5e17
     }
 
     function testUtils_getWethAddressEqualsNetworkAddress() public {
@@ -429,9 +423,5 @@ contract DEXSTest is Test {
         console.log(wethAddress);
         console.log(weth);
         assertEq(wethAddress, weth);
-    }
-
-    function testUtils_getUsdToTokenToDelete() public {
-        console.log(engine.usdToToken(10e18, engine.getWethAddress()));
     }
 }
