@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "test liquidation modifier"
+	git commit -m "fixed liquidation underflow error"
 	git push origin master
 
 interaction-sepolia:

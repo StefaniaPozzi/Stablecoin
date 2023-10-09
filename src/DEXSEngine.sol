@@ -35,7 +35,7 @@ contract DEXSEngine is ReentrancyGuard {
     uint256 private constant PRECISION10 = 1e10;
     uint256 private constant PRECISION18 = 1e18;
     uint256 private constant PRECISION8 = 1e8;
-    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18; //Health factor should be 11e17 (1.1) due to bonus for liquidator
     uint256 private constant LIQUIDATION_PERCENTAGE = 10;
     uint256 private constant LIQUIDATION_BASIS = 100;
 
@@ -165,6 +165,7 @@ contract DEXSEngine is ReentrancyGuard {
         nonReentrant
     {
         s_dexsminted[target] -= amount;
+        //the debt is given to the engine contract to be burned
         bool success = i_dexstablecoin.transferFrom(from, address(this), amount);
         if (!success) {
             revert DEXSEngine_TransferFailed();
@@ -231,6 +232,11 @@ contract DEXSEngine is ReentrancyGuard {
      * @param user the insolvent user
      * @param debtUSDWEI the amount of DEXS to burn to cover user's debt
      *
+     * @dev codehawks audit BUG >> when the bonus is fixed (10%)
+     * and the bonus+debt exceeds user's collateral,
+     * we need to take this bonus from somewhere else >>
+     * Make user to be liquidate when Health Factor == 1.1,
+     * so we can have room for bonus
      */
 
     /*
@@ -246,9 +252,14 @@ contract DEXSEngine is ReentrancyGuard {
 
         uint256 actualDebtToken = usdToToken(debtUSDWEI, token);
         uint256 bonus = ((actualDebtToken * LIQUIDATION_PERCENTAGE) / LIQUIDATION_BASIS);
-        uint256 redeemedCollateralWithBonus = actualDebtToken + bonus;
+        uint256 redeemedCollateral = actualDebtToken + bonus;
 
-        _redeemCollateralFrom(token, redeemedCollateralWithBonus, user, msg.sender);
+        uint256 totalDepositedCollateral = getCollateralDeposited(user, token);
+
+        if (redeemedCollateral > totalDepositedCollateral) {
+            redeemedCollateral = totalDepositedCollateral;
+        }
+        _redeemCollateralFrom(token, redeemedCollateral, user, msg.sender);
         _burnDEXSFrom(debtUSDWEI, msg.sender, user);
 
         uint256 userEndingHealthFactor = healthFactor(user);

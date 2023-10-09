@@ -300,8 +300,8 @@ contract DEXSTest is Test {
         engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI);
     }
 
-    modifier liquidation() {
-        //AlICE mints when weth == 1000$ 
+    function setUpLiquidation() public {
+        //AlICE mints when weth == 1000$
         vm.startPrank(ALICE);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
         engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
@@ -315,21 +315,18 @@ contract DEXSTest is Test {
         vm.startPrank(LIQUIDATOR);
         ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH * 2); //the weth contract allows the engine to use the minted weth
         engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH * 2, SAFE_MINTING_DEXS_USDWEI);
-        stablecoin.approve(address(engine), COLLATERAL_AMOUNT_ETH * 2); //the stablecoin contract allows the engine to use the minted dexs
-
-        uint256 actualDebt = 1e18; //ethereum == 500$ gets doubled to 1000$because the pice halved
-        uint256 bonus = ((actualDebt * 10) / 100);
-        uint256 redeemedCollateralWithBonus = actualDebt + bonus;
-        console.log(redeemedCollateralWithBonus);
-        engine._redeemCollateralFrom(weth, actualDebt, ALICE, msg.sender);
-        // // console.log(engine.getCollateralDeposited(ALICE, weth)); 1e18 eth
-        console.log(engine.usdToToken(SAFE_MINTING_DEXS_USDWEI, weth));
-        // engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI);
+        stablecoin.approve(address(engine), SAFE_MINTING_DEXS_USDWEI); //the stablecoin contract allows the engine to use the minted dexs
         vm.stopPrank();
-        _;
     }
 
-    function testLiquidation_modifier() public liquidation {}
+    function testLiquidation_SuccesfulLiquidation() public {
+        setUpLiquidation();
+        vm.startPrank(LIQUIDATOR);
+        engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI);
+        vm.stopPrank();
+    }
+
+    function testLiquidation_HealthFactorImproves() public {}
 
     function testLiquidation_UserHealthFactorPlummets() public {
         vm.startPrank(ALICE);
