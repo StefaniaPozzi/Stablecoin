@@ -266,6 +266,7 @@ contract DEXSEngine is ReentrancyGuard {
         if (userEndingHealthFactor <= MIN_HEALTH_FACTOR) {
             revert DEXSEngine_HealthFactorNotImproved();
         }
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     /**
@@ -419,5 +420,9 @@ contract DEXSEngine is ReentrancyGuard {
 
     function getWethAddress() public view returns (address) {
         return s_collateralTokenSupported[0];
+    }
+
+    function getCollateralTokens() public view returns (address[] memory) {
+        return s_collateralTokenSupported;
     }
 }

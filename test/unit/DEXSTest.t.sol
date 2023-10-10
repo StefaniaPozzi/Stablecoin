@@ -49,9 +49,6 @@ contract DEXSTest is Test {
         deployer = new DEXSDeploy();
         (stablecoin, engine, networkConfig) = deployer.run();
         (ethUsdPriceFeed, btcUsdPriceFeed, weth, wbtc, deployerKey) = networkConfig.activeNetworkProfiler();
-        if (block.chainid == 31337) {
-            vm.deal(ALICE, COLLATERAL_AMOUNT_ETH);
-        }
         ERC20MockWETH(weth).mint(ALICE, COLLATERAL_AMOUNT_ETH);
     }
 
@@ -263,37 +260,6 @@ contract DEXSTest is Test {
     /**
      * Price plummeting simulation: eth value will fluctuate from 1000e18 $WEI to 0 $WEI to 18 $WEI
      */
-    function testLiquidation_NotImprovingUserHealthFactor() public {
-        //usual arranging when we want to simulate an even that happens inside the token methods
-        //1. Invent the token with problems
-        //2. Feed a new engine with it
-        //3. Transfer ownership of the sick token to the new engine contract
-        ERC20MockPricePlummeting stablecoinMock = new ERC20MockPricePlummeting(ethUsdPriceFeed);
-        tokenAddressesTest = [weth];
-        priceFeedAddressesTest = [ethUsdPriceFeed];
-        DEXSEngine engineMock = new DEXSEngine(tokenAddressesTest, priceFeedAddressesTest, address(stablecoinMock));
-        stablecoinMock.transferOwnership(address(engineMock));
-
-        //the user deposits and mints as always
-        vm.startPrank(ALICE);
-        ERC20MockWETH(weth).approve(address(engineMock), COLLATERAL_AMOUNT_ETH); //first alice says that the spender can spend her money on her behalf, then she deposit
-        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, COLLATERAL_AMOUNT_ETH / 2); //TODO
-        vm.stopPrank();
-
-        //the liquidator gets some weth, deposits and mints
-        ERC20MockWETH(weth).mint(LIQUIDATOR, COLLATERAL_AMOUNT_ETH);
-
-        vm.startPrank(LIQUIDATOR);
-        ERC20MockWETH(weth).approve(address(engineMock), COLLATERAL_AMOUNT_ETH * 2);
-        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH * 2, COLLATERAL_AMOUNT_ETH);
-
-        //the liquidator's health factor will be broken if the price plummets again
-        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(18e8); //this will trigger the revert
-
-        vm.expectRevert(DEXSEngine.DEXSEngine_HealthFactorNotImproved.selector);
-        engineMock.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI); //adjust
-        vm.stopPrank();
-    }
 
     function testLiquidation_RevertIfHealthFactorIsValid() public depositAndmintHalfCollateralSetLiquidator {
         vm.expectRevert(DEXSEngine.DEXSEngine_CannotLiquidate.selector);
@@ -326,23 +292,52 @@ contract DEXSTest is Test {
         vm.stopPrank();
     }
 
+    function testLiquidation_LiquidatorHealthFactorDoesNotImprove() public {
+        //usual arranging when we want to simulate an even that happens inside the token methods
+        //1. Invent the token with problem: before burning the price will plummet to 0
+        //2. Feed a new engine with it
+        //3. Transfer ownership of the sick token to the new engine contract
+        ERC20MockPricePlummeting stablecoinMock = new ERC20MockPricePlummeting(ethUsdPriceFeed);
+        tokenAddressesTest = [weth];
+        priceFeedAddressesTest = [ethUsdPriceFeed];
+        DEXSEngine engineMock = new DEXSEngine(tokenAddressesTest, priceFeedAddressesTest, address(stablecoinMock));
+        stablecoinMock.transferOwnership(address(engineMock));
+
+        //the user deposits and mints as always
+        vm.startPrank(ALICE);
+        ERC20MockWETH(weth).approve(address(engineMock), COLLATERAL_AMOUNT_ETH); //first alice says that the spender can spend her money on her behalf, then she deposit
+        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI); //TODO
+        vm.stopPrank();
+
+        //the liquidator gets some weth, deposits and mints
+        ERC20MockWETH(weth).mint(LIQUIDATOR, COLLATERAL_AMOUNT_ETH * 2);
+
+        vm.startPrank(LIQUIDATOR);
+        ERC20MockWETH(weth).approve(address(engineMock), COLLATERAL_AMOUNT_ETH * 2);
+        engineMock.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH * 2, SAFE_MINTING_DEXS_USDWEI);
+        stablecoinMock.approve(address(engineMock), SAFE_MINTING_DEXS_USDWEI); //the stablecoin contract allows the engine to use the minted dexs
+
+        int256 plummetingEthPrice = 500e8;
+        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(plummetingEthPrice);
+        vm.expectRevert(DEXSEngine.DEXSEngine_HealthFactorIsBelowThreshold.selector);
+        engineMock.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI);
+        vm.stopPrank();
+    }
+
+    function testLiquidation_UserHealthFactorDoesNotImprove() public {
+        setUpLiquidation();
+        vm.startPrank(LIQUIDATOR);
+        vm.expectRevert(DEXSEngine.DEXSEngine_HealthFactorNotImproved.selector);
+        engine.liquidate(weth, ALICE, SAFE_MINTING_DEXS_USDWEI / 2);
+        vm.stopPrank();
+    }
+
     function testLiquidation_HealthFactorImproves() public {}
 
     function testLiquidation_UserHealthFactorPlummets() public {
-        vm.startPrank(ALICE);
-        ERC20MockWETH(weth).approve(address(engine), COLLATERAL_AMOUNT_ETH);
-        engine.depositCollateralAndMint(weth, COLLATERAL_AMOUNT_ETH, SAFE_MINTING_DEXS_USDWEI);
         uint256 originalHealthFactor = engine.healthFactor(ALICE);
-        console.log("1--", originalHealthFactor); //1000e18
-        vm.stopPrank();
-
-        //BOB mints with weth == 12$ -> COLLATERAL_AMOUNT_ETH = 12*1e18
-        //he has good Health Factor, alice does not
-        int256 plummetingEthPrice = 12e8;
-        AggregatorV3Mock(ethUsdPriceFeed).updateAnswer(plummetingEthPrice);
+        setUpLiquidation();
         uint256 plummetedHealthFactor = engine.healthFactor(ALICE);
-        console.log("2--", plummetedHealthFactor);
-
         assertGt(originalHealthFactor, plummetedHealthFactor);
     }
 

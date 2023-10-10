@@ -18,7 +18,8 @@ contract ERC20MockPricePlummeting is ERC20Burnable, Ownable {
         super.burn(_amount);
     }
 
-    function mint(address to, uint256 amount) public {
+    function mint(address to, uint256 amount) external onlyOwner returns (bool) {
         _mint(to, amount);
+        return true;
     }
 }
