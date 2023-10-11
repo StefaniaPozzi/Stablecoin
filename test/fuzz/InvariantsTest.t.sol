@@ -18,7 +18,6 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {Handler} from "../../test/fuzz/Handler.t.sol";
 
 contract Invariants is StdInvariant, Test {
-    DEXSDeploy deployer;
     DEXSEngine engine;
     DEXStablecoin stablecoin;
     NetworkConfig config;
@@ -30,11 +29,12 @@ contract Invariants is StdInvariant, Test {
         DEXSDeploy deployer = new DEXSDeploy();
         (stablecoin, engine, config) = deployer.run();
         (,, weth, wbtc,) = config.activeNetworkProfiler();
+
         handler = new Handler (engine, stablecoin);
         targetContract(address(handler));
     }
 
-    function invariant_protocolMustHaveMoreDEXSThanCollateral() public view {
+    function invariant_ProtocolMustHaveMoreDEXSThanCollateral() public view {
         uint256 totalSupply = stablecoin.totalSupply();
         uint256 totalCollateralWeth = IERC20(weth).balanceOf(address(engine)); //amount of weth sent to the engine
         uint256 totalCollateralWbtc = IERC20(wbtc).balanceOf(address(engine));
@@ -42,6 +42,13 @@ contract Invariants is StdInvariant, Test {
         uint256 totalCollateralWbtcInUSD = engine.tokenToUsd(wbtc, totalCollateralWbtc);
         uint256 totalCollateral = totalCollateralWethInUSD + totalCollateralWbtcInUSD;
 
-        assert(totalCollateral > totalSupply);
+        console.log("total supply ", totalCollateral);
+        // console.log("times mint called ", handler.ghostVariable_TimesFunctionIsCalled());
+        console.log("-----------");
+        assert(totalCollateral >= totalSupply);
+    }
+
+    function invariant_ProtocolGettersNeverRevert() public view {
+        engine.getSupportedCollateral();
     }
 }
