@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "invariant tests mint"
+	git commit -m "Oracle lib"
 	git push origin master
 
 interaction-sepolia:

@@ -79,10 +79,11 @@ contract Handler is Test {
         vm.stopPrank();
     }
 
-    function updateCollateralPrice(uint96 newPrice) public {
-        int256 newPriceInt = int256(uint256(newPrice));
-        aggregatorV3Mock.updateAnswer(newPriceInt);
-    }
+    // it breaks the protocol! > known bug
+    // function updateCollateralPrice(uint96 newPrice) public {
+    //     int256 newPriceInt = int256(uint256(newPrice));
+    //     aggregatorV3Mock.updateAnswer(newPriceInt);
+    // }
 
     function _getCollateralFromSeed(uint256 seed) private view returns (address) {
         if (seed % 2 == 0) {

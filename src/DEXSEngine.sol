@@ -7,6 +7,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import {console} from "forge-std/console.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 /**
  * @title DEXSEngine
@@ -31,6 +32,8 @@ contract DEXSEngine is ReentrancyGuard {
     error DEXSEngine_HealthFactorNotImproved();
     error DEXSEngine_LiquidatorHealthFactorNegative();
     error DEXSEngine_TokenNotSupportedAsCollateral();
+
+    using OracleLib for AggregatorV3Interface;
 
     uint256 private constant PRECISION10 = 1e10;
     uint256 private constant PRECISION18 = 1e18;
