@@ -4,7 +4,7 @@ include .env
 
 push:
 	git add .
-	git commit -m "Oracle lib"
+	git commit -m "added Oracle lib"
 	git push origin master
 
 interaction-sepolia:
